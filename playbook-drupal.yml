@@ -1,0 +1,81 @@
+---
+- hosts: drupal
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+  - name: Create user, domain and database
+    import_tasks: tasks/hslamp.yml
+  - name: Install composer
+    import_tasks: tasks/hscomposer.yml
+
+
+  - name: Install Drupal with Composer
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    shell: |
+      # see https://packagist.org/packages/drupal-composer/drupal-project and https://github.com/drupal-composer/drupal-project
+      ~/composer/composer.phar create-project drupal-composer/drupal-project:9.x-dev "/home/pacs/{{pac}}/users/{{user}}/drupal"
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}"
+      creates: "/home/pacs/{{pac}}/users/{{user}}/drupal/web"
+
+    #  composer_executable is only available in latest Ansible version, and somehow this still does fail
+    #composer:
+    #  command: create-project
+    #  composer_executable: "/home/pacs/{{pac}}/users/{{user}}/composer"
+    #  arguments: drupal-composer/recommended-project "/home/pacs/{{pac}}/users/{{user}}/drupal"
+    #  working_dir: "/home/pacs/{{pac}}/users/{{user}}/drupal"
+
+  - name: Install Drupal site with Drush
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    shell: |
+      (echo "yes" | vendor/drush/drush/drush site-install standard --locale=de --site-name="{{sitename}}" --db-url=mysql://{{pac}}_{{user}}:{{password}}@localhost/{{pac}}_{{user}} --account-name={{adminname}} --account-pass={{adminpwd}}) || exit -1
+      touch /home/pacs/{{pac}}/users/{{user}}/.siteinstalled
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/drupal"
+      creates: "/home/pacs/{{pac}}/users/{{user}}/.siteinstalled"
+
+  - name: drop htdocs-ssl
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    file:
+       path: "/home/pacs/{{pac}}/users/{{user}}/doms/{{domain}}/htdocs-ssl"
+       state: absent
+
+  - name: create symbolic link for htdocs-ssl
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    file:
+      src: "/home/pacs/{{pac}}/users/{{user}}/drupal/web"
+      dest: "/home/pacs/{{pac}}/users/{{user}}/doms/{{domain}}/htdocs-ssl"
+      state: link
+
+  - name: Load page once to create twig files
+    uri:
+      url: https://{{domain}}
+
+  - name: change RewriteBase in htaccess
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    lineinfile:
+      path: /home/pacs/{{pac}}/users/{{user}}/drupal/web/.htaccess
+      regexp: '^.*RewriteBase /$'
+      line: RewriteBase /
+  - name: change Options in files htaccess
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    lineinfile:
+      path: /home/pacs/{{pac}}/users/{{user}}/drupal/web/sites/default/files/.htaccess
+      regexp: '^Options -Indexes.*$'
+      line: Options -Indexes -MultiViews
+  - name: change Options in twig htaccess
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    lineinfile:
+      path: /home/pacs/{{pac}}/users/{{user}}/drupal/web/sites/default/files/php/twig/.htaccess
+      regexp: '^Options -Indexes.*$'
+      line: Options -Indexes -MultiViews
